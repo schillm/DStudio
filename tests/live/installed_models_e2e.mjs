@@ -16,7 +16,7 @@ const receipt = JSON.parse(fs.readFileSync(path.join(installation,'results.json'
 assert.equal(receipt.schema,'dstudio.first-launch.v1');
 assert.equal(receipt.status,'pass','source-installation E2E must pass first');
 const sources = path.join(installation,'support');
-const app = path.join(installation,'DStudio.app/Contents/MacOS/DStudio');
+const app = path.join(installation,'DStudio1017.app/Contents/MacOS/DStudio1017');
 const modelRoot = fs.realpathSync(process.argv[3] || 'ds4/gguf');
 const run = fs.mkdtempSync(path.resolve('tests/.artifacts/installed-models-'));
 const report = {schema:'dstudio.installed-models-e2e.v1',started:new Date().toISOString(),
@@ -72,7 +72,7 @@ async function checked(row,name,fn) {
   check.seconds=(performance.now()-t)/1000;save();console.log(`${row.file}: ${name}: ${check.status}`);
 }
 try {
-  const listener=spawnSync('lsof',['-nP','-iTCP:28000','-sTCP:LISTEN','-t'],{encoding:'utf8'});
+  const listener=spawnSync('lsof',['-nP','-iTCP:28017','-sTCP:LISTEN','-t'],{encoding:'utf8'});
   assert.equal((listener.stdout||'').trim(),'','stop the existing engine explicitly before this heavyweight sweep; do not adopt it');
   browser=await webkit.launch({headless:true});
   // Smallest resident model first; all heavy processes are strictly sequential.

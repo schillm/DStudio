@@ -5,14 +5,14 @@
  * run in three mutually exclusive modes (the ds4 instance-lock forbids
  * two large processes together):
  *
- *   - server : ds4-server, the HTTP API for normal chat (port 28000)
+ *   - server : ds4-server, the HTTP API for normal chat (port 28017)
  *   - agent  : ds4-agent-jsonl --non-interactive, the coding agent via pipe
  *   - design : ds4-design --jsonl, the design agent (HTML in a workspace)
  *
  * Makes start.sh obsolete: all of its parameters are here.
  *
  * Compile:  cc -O2 -Wall -Wextra -o dstudio dstudio.c
- * Run:      ./dstudio [web_port] [ds4_dir]      (default 5500, ./ds4)
+ * Run:      ./dstudio [web_port] [ds4_dir]      (default 5517, ./ds4)
  *
  * Local API (only from this page, see anti-CSRF):
  *   GET  /api/status                  engine state, progress, models
@@ -43,6 +43,7 @@
 #define _GNU_SOURCE
 #endif
 #include <ctype.h>
+#include "dstudio_identity.h"
 #include <math.h>
 #include <errno.h>
 #include <limits.h>
@@ -329,7 +330,7 @@ static char *ds4_strndup_local(const char *s, size_t n) {
 #  define HAVE_EMBEDDED_DESIGN_ANNOTATOR 1
 #endif
 
-#define DEFAULT_PORT 5500
+#define DEFAULT_PORT DSTUDIO_DEFAULT_HTTP_PORT
 /* DS4UI_PAGE_FROM_DISK reads this, relative to the cwd (the repo root). */
 #define PAGE_PATH    "web/index.html"
 #define LOADING_PATH "web/loading.html"
@@ -411,6 +412,11 @@ static char *ds4_strndup_local(const char *s, size_t n) {
 #define MODEL_DS41_1017_VISION_BYTES 970555552LL
 #define MODEL_PRO   "gguf/DeepSeek-V4-Pro-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-Instruct-imatrix-0813.gguf"
 #define MODEL_LAGUNA "gguf/laguna-s-2.1-Q4_K_M.gguf"
+/* LFS sha256 of that file at the pinned revision 706fa697... (size 68248759648). The Hugging Face cache
+ * names its temporary files after the file's hash and/or name, so these two strings identify Laguna's
+ * entries in a cache that the stock DStudio shares with this fork. */
+#define MODEL_LAGUNA_SHA256 "e163b2c98908809a71245d6bb68b2226994d9969cb2a438eccb72196a1c4147a"
+#define MODEL_LAGUNA_BASENAME "laguna-s-2.1-Q4_K_M.gguf"
 #define MODEL_GLM53_Q2 "gguf/GLM-5.3-Flash-Q2.gguf"
 #define MODEL_GLM53_Q2_EXPECTED_BYTES 96505816384LL
 #define MODEL_GLM53_VISION "gguf/GLM-5.3-Flash-Vision-Encoder.gguf"
@@ -454,7 +460,7 @@ enum { SSD_STREAMING_OFF = 0, SSD_STREAMING_ON = 1, SSD_STREAMING_AUTO = 2 };
 
 typedef struct {
     int uncensored;   /* 0 standard, 1 uncensored */
-    int port;         /* server: HTTP port. default 28000 */
+    int port;         /* server: HTTP port. default 28017 */
     int ctx;          /* default 262144 */
     int power;        /* 1..100, default 100 */
     int kv_space_mb;  /* server: default 24576 */
@@ -501,7 +507,7 @@ static char g_launch_executable[DSTUDIO_PATH_MAX];
 static volatile sig_atomic_t g_launch_worker_cancel = 0;
 
 static const engine_cfg ENGINE_DEFAULTS = {
-    0, 28000, 65536, 90, 24576, 128, 1, 0, SSD_STREAMING_OFF, "max"
+    0, DSTUDIO_DEFAULT_ENGINE_PORT, 65536, 90, 24576, 128, 1, 0, SSD_STREAMING_OFF, "max"
 };
 
 /* ---- global engine state ---- */
@@ -635,10 +641,10 @@ static const char DESIGN_HEADERS[] =
  * which rebinds the listener to 0.0.0.0 live; DS4UI_HOST overrides the boot host. */
 static char g_bind_host[64] = "127.0.0.1";
 static int  g_srv_fd = -1;     /* HTTP listen socket (rebindable for the LAN toggle) */
-static int  g_http_port = 5500;
+static int  g_http_port = DSTUDIO_DEFAULT_HTTP_PORT;
 static int  g_reply_cors = 0;
 /* Set by the windowed launcher (app.cc) BEFORE forking the server: a pre-picked FREE port,
- * so if 5500 is squatted (e.g. a leftover dev server) DStudio opens on the next free
+ * so if 5517 is squatted (e.g. a leftover dev server) DStudio opens on the next free
  * port instead of a blank window. 0 = not forced (CLI/headless uses the argv/default port). */
 int ds4ui_forced_port = 0;
 
@@ -2503,6 +2509,7 @@ static long long ds41_download_bytes(const char *checkout, const char *target,
     return total > final_bytes ? total : final_bytes;
 }
 
+static int laguna_cache_entry(const char *name);
 static long long model_download_bytes_present(void) {
     if (!g_dl_rel[0]) return 0;
     const char *checkout = g_dl_directory[0] ? g_dl_directory : g_ds4_dir;
@@ -2527,6 +2534,7 @@ static long long model_download_bytes_present(void) {
     while ((de = readdir(d)) != NULL) {
         size_t n = strlen(de->d_name);
         if (n < 11 || strcmp(de->d_name + n - 11, ".incomplete")) continue;
+        if (!strcmp(g_dl_variant, "laguna-q4") && !laguna_cache_entry(de->d_name)) continue;
         char path[2300];
         snprintf(path, sizeof path, "%s/%s", cache, de->d_name);
         if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) continue;
@@ -2534,6 +2542,12 @@ static long long model_download_bytes_present(void) {
     }
     closedir(d);
     return best;
+}
+
+/* True only for a Hugging Face cache entry (.incomplete/.lock) that is Laguna's: the name carries
+ * Laguna's pinned sha256 or its own file name. Every other entry in the shared cache is someone else's. */
+static int laguna_cache_entry(const char *name) {
+    return name && (strstr(name, MODEL_LAGUNA_SHA256) || strstr(name, MODEL_LAGUNA_BASENAME));
 }
 
 static long long hf_partial_bytes_in_checkout(const char *checkout) {
@@ -2546,6 +2560,7 @@ static long long hf_partial_bytes_in_checkout(const char *checkout) {
     while ((de = readdir(d)) != NULL) {
         size_t n = strlen(de->d_name);
         if (n < 11 || strcmp(de->d_name + n - 11, ".incomplete")) continue;
+        if (!laguna_cache_entry(de->d_name)) continue;     /* only used for Laguna */
         char path[2300];
         struct stat st;
         snprintf(path, sizeof path, "%s/%s", cache, de->d_name);
@@ -2557,13 +2572,86 @@ static long long hf_partial_bytes_in_checkout(const char *checkout) {
     return best;
 }
 
+/* ---- DStudio 1017 fork: partial downloads in the shared model folder ----
+ * <checkout>/gguf is a symlink to the stock app's weights folder, so a `.part` or HF `.incomplete`
+ * found there may belong to a stock DStudio download. This fork therefore only reports, resumes and
+ * deletes partials of targets IT started: they are recorded in <data dir>/model-download-targets (one
+ * id per line). The fork's own 1017 files are unknown to the stock app and always count as ours.
+ * A partial that changed in the last two minutes is also never touched while no download of ours is
+ * running: somebody else is writing it. */
+#define DOWNLOAD_ACTIVE_WINDOW_S 120
+static void mkpath(const char *path);
+static int dstudio_data_dir_path(char *out, size_t outsz);
+
+static int download_owned_path(char *out, size_t outsz) {
+    char dir[DSTUDIO_PATH_MAX];
+    if (!dstudio_data_dir_path(dir, sizeof dir)) return 0;
+    int n = snprintf(out, outsz, "%s/model-download-targets", dir);
+    return n > 0 && (size_t)n < outsz;
+}
+
+static int fork_download_owned(const char *target) {
+    if (!target || !target[0]) return 0;
+    if (!strncmp(target, "ds41f-1017-", 11)) return 1;
+    if (g_dl_variant[0] && !strcmp(g_dl_variant, target)) return 1;
+    if (!strcmp(target, "flash-abliterated") && !strcmp(g_dl_variant, "flash")) return 1;
+    char path[DSTUDIO_PATH_MAX + 40], line[128];
+    if (!download_owned_path(path, sizeof path)) return 0;
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    int found = 0;
+    while (fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (!strcmp(line, target)) { found = 1; break; }
+    }
+    fclose(f);
+    return found;
+}
+
+static void fork_download_record(const char *target) {
+    if (!target || !target[0] || fork_download_owned(target)) return;
+    char path[DSTUDIO_PATH_MAX + 40], dir[DSTUDIO_PATH_MAX];
+    if (!download_owned_path(path, sizeof path) || !dstudio_data_dir_path(dir, sizeof dir)) return;
+    mkpath(dir);
+    FILE *f = fopen(path, "ab");
+    if (!f) return;
+    fprintf(f, "%s\n", target);
+    fclose(f);
+}
+
+/* Rewrites the list without `target`; only this fork's own small file is touched. */
+static void fork_download_forget(const char *target) {
+    char path[DSTUDIO_PATH_MAX + 40], tmp[DSTUDIO_PATH_MAX + 48], line[128];
+    if (!target || !download_owned_path(path, sizeof path)) return;
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    FILE *o = fopen(tmp, "wb");
+    if (!o) { fclose(f); return; }
+    while (fgets(line, sizeof line, f)) {
+        char t[128]; cstr_copy(t, sizeof t, line); t[strcspn(t, "\r\n")] = '\0';
+        if (strcmp(t, target)) fputs(line, o);
+    }
+    fclose(f);
+    int ok = fclose(o) == 0;
+    if (ok) rename(tmp, path); else unlink(tmp);
+}
+
+/* True when the file was modified within the active window (another process may be writing it). */
+static int download_file_recently_written(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) return 0;
+    time_t now = time(NULL);
+    return now - st.st_mtime < DOWNLOAD_ACTIVE_WINDOW_S && st.st_mtime - now < DOWNLOAD_ACTIVE_WINDOW_S;
+}
+
 static int paused_model_download(char *target, size_t targetsz,
                                  long long *bytes, long long *expected) {
     if (g_dl_pid > 0) return 0;
     int q27_partial = 0;
     const char *checkout = !strcmp(g_dl_variant, "qwen27-q6") && g_dl_directory[0]
         ? g_dl_directory : g_ds4_dir;
-    long long q27_bytes = qwen27_download_bytes(checkout, &q27_partial);
+    long long q27_bytes = fork_download_owned("qwen27-q6") ? qwen27_download_bytes(checkout, &q27_partial) : 0;
     if (q27_partial) {
         cstr_copy(target, targetsz, "qwen27-q6");
         if (bytes) *bytes = q27_bytes;
@@ -2572,7 +2660,7 @@ static int paused_model_download(char *target, size_t targetsz,
     }
     int mlx_partial = 0;
     checkout = !strcmp(g_dl_variant, "qwen36-mlx") && g_dl_directory[0] ? g_dl_directory : g_ds4_dir;
-    long long mlx_bytes = mlx_download_bytes(checkout, &mlx_partial);
+    long long mlx_bytes = fork_download_owned("qwen36-mlx") ? mlx_download_bytes(checkout, &mlx_partial) : 0;
     if (mlx_partial) {
         cstr_copy(target, targetsz, "qwen36-mlx");
         if (bytes) *bytes = mlx_bytes;
@@ -2583,6 +2671,7 @@ static int paused_model_download(char *target, size_t targetsz,
     static const char *ds41_targets[] = {"ds41f-q2", "ds41f-q4", "ds41f-vision", "qwen38-q2", "qwen38-q4k",
                                          "ds41f-1017-q2", "ds41f-1017-vision"};
     for (size_t i = 0; i < sizeof ds41_targets / sizeof ds41_targets[0]; i++) {
+        if (!fork_download_owned(ds41_targets[i])) continue;
         const char *store = !strcmp(g_dl_variant, ds41_targets[i]) && g_dl_directory[0]
             ? g_dl_directory : g_ds4_dir;
         int partial = 0;
@@ -2612,6 +2701,7 @@ static int paused_model_download(char *target, size_t targetsz,
         "qwen36-q6",
     };
     for (size_t i = 0; i < sizeof stable_targets / sizeof stable_targets[0]; i++) {
+        if (!fork_download_owned(stable_targets[i])) continue;
         char rel[1100], final[DSTUDIO_PATH_MAX + 1100], part[DSTUDIO_PATH_MAX + 1110];
         long long want = 0;
         struct stat st;
@@ -2636,6 +2726,7 @@ static int paused_model_download(char *target, size_t targetsz,
         { DS4_LAGUNA_DIR_NAME, "laguna-q4", MODEL_LAGUNA, 68000000000LL },
     };
     for (size_t i = 0; i < sizeof managed / sizeof managed[0]; i++) {
+        if (!fork_download_owned(managed[i].target)) continue;
         char checkout[DSTUDIO_PATH_MAX], final[DSTUDIO_PATH_MAX + 1100];
         snprintf(checkout, sizeof checkout, "%s/%s", g_web_dir, managed[i].dirname);
         if (managed[i].final_rel[0]) {
@@ -2689,6 +2780,7 @@ static int prepare_laguna_resumable_partial(const char *checkout,
         struct dirent *de;
         while ((de = readdir(d)) != NULL) {
             if (!name_has_suffix(de->d_name, ".incomplete")) continue;
+            if (!laguna_cache_entry(de->d_name)) continue;     /* never adopt another model's partial */
             char path[DSTUDIO_PATH_MAX + 400];
             snprintf(path, sizeof path, "%s/%s", cache, de->d_name);
             if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) continue;
@@ -2897,6 +2989,7 @@ static long long delete_laguna_partial_files(const char *checkout, int *failed) 
     while ((de = readdir(d)) != NULL) {
         if (!name_has_suffix(de->d_name, ".incomplete") &&
             !name_has_suffix(de->d_name, ".lock")) continue;
+        if (!laguna_cache_entry(de->d_name)) continue;         /* leave every other model's files alone */
         char path[DSTUDIO_PATH_MAX + 400];
         snprintf(path, sizeof path, "%s/%s", cache, de->d_name);
         long long size = 0;
@@ -3803,10 +3896,10 @@ static void kv_root(char *out, size_t outsz) {
 #ifdef _WIN32
     const char *base = getenv("LOCALAPPDATA");
     if (!base || !base[0]) base = getenv("USERPROFILE");
-    snprintf(out, outsz, "%s\\DStudio\\ds4-kv", base ? base : ".");
+    snprintf(out, outsz, "%s\\" DSTUDIO_SUPPORT_NAME "\\" DSTUDIO_KV_DIRNAME, base ? base : ".");
 #else
     const char *home = getenv("HOME");
-    snprintf(out, outsz, "%s/.local/share/flashcards/ds4-kv", home ? home : ".");
+    snprintf(out, outsz, "%s/.local/share/flashcards/" DSTUDIO_KV_DIRNAME, home ? home : ".");
 #endif
 }
 static void kv_dir_for_model(const char *rel, char *out, size_t outsz) {
@@ -3852,15 +3945,15 @@ static int dstudio_data_dir_path(char *out, size_t outsz) {
         n = snprintf(out, outsz, "%s", configured);
 #ifdef _WIN32
     } else if (getenv("LOCALAPPDATA") && getenv("LOCALAPPDATA")[0]) {
-        n = snprintf(out, outsz, "%s/DStudio", getenv("LOCALAPPDATA"));
+        n = snprintf(out, outsz, "%s/" DSTUDIO_SUPPORT_NAME, getenv("LOCALAPPDATA"));
 #elif defined(__APPLE__)
     } else if (getenv("HOME") && getenv("HOME")[0]) {
-        n = snprintf(out, outsz, "%s/Library/Application Support/DStudio", getenv("HOME"));
+        n = snprintf(out, outsz, "%s/Library/Application Support/" DSTUDIO_SUPPORT_NAME, getenv("HOME"));
 #else
     } else if (getenv("XDG_CONFIG_HOME") && getenv("XDG_CONFIG_HOME")[0]) {
-        n = snprintf(out, outsz, "%s/dstudio", getenv("XDG_CONFIG_HOME"));
+        n = snprintf(out, outsz, "%s/" DSTUDIO_SUPPORT_NAME_LINUX, getenv("XDG_CONFIG_HOME"));
     } else if (getenv("HOME") && getenv("HOME")[0]) {
-        n = snprintf(out, outsz, "%s/.config/dstudio", getenv("HOME"));
+        n = snprintf(out, outsz, "%s/.config/" DSTUDIO_SUPPORT_NAME_LINUX, getenv("HOME"));
 #endif
     }
     return n >= 0 && (size_t)n < outsz;
@@ -3882,6 +3975,56 @@ static int persist_http_port(int port) {
     if (fclose(f) != 0) ok = 0;
     return ok;
 }
+
+/* ---- DStudio 1017 fork: never operate on the stock app's engine checkout ----
+ * The stock DStudio keeps its checkout (and everything else it owns) under
+ * $HOME/DSTUDIO_STOCK_SUPPORT_SUBPATH. This fork patches and rebuilds the checkout it uses, so
+ * pointing it there would modify the stock engine. Only the weights are shared (gguf symlink). */
+
+/* True when `path` equals `root` or lies below it. Component-wise: "/a/DStudio 1017" is NOT under
+ * "/a/DStudio". Both arguments should already be canonical (realpath) absolute paths. */
+static int dstudio_path_is_at_or_under(const char *path, const char *root) {
+    if (!path || !root || path[0] != '/' || root[0] != '/') return 0;
+    size_t rl = strlen(root);
+    while (rl > 1 && root[rl - 1] == '/') rl--;
+    if (rl == 1) return 1;                       /* "/" contains everything; never the stock root in practice */
+    if (strncmp(path, root, rl) != 0) return 0;
+    return path[rl] == '\0' || path[rl] == '/';
+}
+
+/* True when `path` (any spelling, symlinks resolved; may not exist yet) is the stock support folder
+ * or inside it. */
+static int dstudio_checkout_is_stock(const char *path) {
+    const char *home = getenv("HOME");
+    if (!path || !path[0] || !home || home[0] != '/') return 0;
+    char root[DSTUDIO_PATH_MAX], rroot[DSTUDIO_PATH_MAX], rpath[DSTUDIO_PATH_MAX];
+    if (snprintf(root, sizeof root, "%s/" DSTUDIO_STOCK_SUPPORT_SUBPATH, home) >= (int)sizeof root) return 0;
+    const char *r1 = realpath(root, rroot) ? rroot : root;
+    if (path[0] == '/' && dstudio_path_is_at_or_under(path, r1)) return 1;
+    if (path[0] == '/' && dstudio_path_is_at_or_under(path, root)) return 1;
+    if (realpath(path, rpath)) {
+        if (dstudio_path_is_at_or_under(rpath, r1) || dstudio_path_is_at_or_under(rpath, root)) return 1;
+    } else {
+        /* Not there yet: resolve the deepest existing ancestor, then re-append the rest. */
+        char tmp[DSTUDIO_PATH_MAX];
+        if (path[0] != '/' || snprintf(tmp, sizeof tmp, "%s", path) >= (int)sizeof tmp) return 0;
+        for (;;) {
+            char *slash = strrchr(tmp, '/');
+            if (!slash || slash == tmp) break;
+            *slash = '\0';
+            if (realpath(tmp, rpath)) {
+                size_t used = strlen(rpath);
+                const char *rest = path + (slash - tmp);
+                if (used + strlen(rest) + 1 > sizeof rpath) return 0;
+                strcat(rpath, rest);
+                return dstudio_path_is_at_or_under(rpath, r1) || dstudio_path_is_at_or_under(rpath, root);
+            }
+        }
+    }
+    return 0;
+}
+
+#define STOCK_CHECKOUT_MSG "That folder belongs to the stock DStudio app. DStudio 1017 never patches or rebuilds the stock engine; model files are already shared through the gguf folder, so install or choose a separate engine checkout."
 
 /* Keep an explicitly selected engine checkout outside browser storage. The
  * launcher needs this before the UI exists, otherwise every app restart falls
@@ -3973,6 +4116,49 @@ static pid_t ds4_instance_lock_owner(void) {
     return owner > 0 ? (pid_t)owner : -1;
 #endif
 }
+
+/* DStudio 1017 fork: /tmp/ds4.lock is shared with the stock DStudio on purpose (one heavy engine at a
+ * time), but the two apps listen on different ports. A lock held by an engine whose command line says
+ * `--port N` with N != our port is another DStudio's engine: attaching would wait forever. This only
+ * returns 1 when the owner is positively identified that way; unknown owners keep the old attach-and-wait
+ * behaviour (e.g. our own detached server that is still loading). */
+static int ds4_args_foreign_port(const char *args, int port) {
+    if (!args) return 0;
+    const char *p = args;
+    while ((p = strstr(p, "--port")) != NULL) {
+        const char *q = p + 6;
+        int boundary_before = p == args || p[-1] == ' ' || p[-1] == '\t';
+        if (boundary_before && (*q == ' ' || *q == '=')) {
+            while (*q == ' ' || *q == '=') q++;
+            char *end = NULL;
+            long v = strtol(q, &end, 10);
+            if (end != q && v > 0) return v != port;
+        }
+        p = q;
+    }
+    return 0;
+}
+
+static int ds4_lock_owner_foreign(pid_t owner, int port) {
+#ifdef _WIN32
+    (void)owner; (void)port; return 0;
+#else
+    static pid_t cached_owner = 0; static int cached_port = 0, cached_result = 0;
+    if (owner <= 0) return 0;
+    if (owner == cached_owner && port == cached_port) return cached_result;
+    char cmd[96], args[1024] = "";
+    snprintf(cmd, sizeof cmd, "ps -o args= -p %ld 2>/dev/null", (long)owner);
+    FILE *f = popen(cmd, "r");
+    if (!f) return 0;
+    size_t n = fread(args, 1, sizeof args - 1, f);
+    pclose(f);
+    args[n] = '\0';
+    cached_owner = owner; cached_port = port; cached_result = ds4_args_foreign_port(args, port);
+    return cached_result;
+#endif
+}
+
+#define ENGINE_LOCK_BUSY_MSG "Another DStudio is running a model. Quit it or unload its model, then try again."
 
 static void reuse_external_ds4(const engine_cfg *cfg, int ready, pid_t owner) {
     close_pipes();
@@ -4588,6 +4774,9 @@ static void reap_child(void) {
                 g_active_download_task = 0;
             }
             g_dl_result = code == 0 ? 1 : -1;
+            /* A finished download is no longer a partial this fork owns; a later
+             * stock download of the same model must not become deletable here. */
+            if (code == 0) fork_download_forget(g_dl_variant);
             if (g_dl_progress_fd >= 0) { close(g_dl_progress_fd); g_dl_progress_fd = -1; }
             g_dl_pid = -1;   /* keep g_dl_variant so status can report 100 / completion once */
         }
@@ -4723,7 +4912,7 @@ static void stop_child(void) {
 
 /* Kills the EXTERNAL process holding a port (a ds4-server started outside the
  * launcher, e.g. from a terminal): the ds4 instance-lock forbids two large
- * processes, so to switch to agent/design we must free port 28000. Finds the
+ * processes, so to switch to agent/design we must free port 28017. Finds the
  * listeners via lsof, SIGTERMs them (never ourselves / our own child), waits
  * for the port to free, escalates to SIGKILL. Best-effort: returns 1 if the
  * port is free afterwards. The launcher runs as the user, so this only ever
@@ -5985,7 +6174,7 @@ static int mac_materialize_bundle_support(const char *bundle_root,
     } else {
         const char *home = getenv("HOME");
         if (!home || !home[0]) return 0;
-        n = snprintf(target, sizeof target, "%s/Library/Application Support/DStudio", home);
+        n = snprintf(target, sizeof target, "%s/Library/Application Support/" DSTUDIO_SUPPORT_NAME, home);
     }
     if (n < 0 || (size_t)n >= sizeof target || !mac_mkdir_p(target)) return 0;
 
@@ -6882,6 +7071,21 @@ static void api_model_download(int fd, const char *body) {
         send_json(fd, "500 Internal Server Error", out);
         return;
     }
+    {   /* Resume guard: never append to a partial somebody else is writing (stock DStudio shares this folder). */
+        char rel[1100], part[DSTUDIO_PATH_MAX + 1110]; long long want = 0;
+        model_download_details(abliterated ? "flash-abliterated" : target, rel, sizeof rel, &want);
+        /* Our own just-stopped/just-failed download of this target is ours to resume. */
+        const int own_recent = g_dl_pid <= 0 && !strcmp(g_dl_variant, target);
+        if (rel[0] && !own_recent) {
+            snprintf(part, sizeof part, "%s/%s.part", ds4_abs, rel);
+            if (download_file_recently_written(part)) {
+                task_mark_failed(task_id, "partial file is being written by another program", part);
+                send_json(fd, "409 Conflict",
+                          "{\"ok\":false,\"error\":\"Another program (probably the stock DStudio) is downloading this model right now. Wait for it to finish or stop it there, then try again.\"}");
+                return;
+            }
+        }
+    }
     const int mlx = !strcmp(target, "qwen36-mlx");
 #if !(defined(__APPLE__) && defined(__aarch64__))
     if (mlx) {
@@ -6894,7 +7098,7 @@ static void api_model_download(int fd, const char *body) {
      * admitted store identity, private log, phase pipe and engine install. */
     const int q27 = !strcmp(target, "qwen27-q6") || mlx;
     char install_root[DSTUDIO_PATH_MAX] = "";
-    char store_identity[64] = "", log_path[128] = "/tmp/ds4-model-dl.log";
+    char store_identity[64] = "", log_path[128] = DSTUDIO_DOWNLOAD_LOG;
     int owned_log = -1;
     int progress[2] = {-1, -1};
     if (q27) {
@@ -7034,6 +7238,7 @@ static void api_model_download(int fd, const char *body) {
     setpgid(pid, pid);
     if (owned_log >= 0) close(owned_log);
     if (progress[1] >= 0) close(progress[1]);
+    fork_download_record(abliterated ? "flash-abliterated" : target);
     g_dl_pid = pid;
     g_dl_progress_fd = progress[0]; g_dl_phase = q27 ? 'I' : 'D'; g_dl_stop_requested = 0;
     cstr_copy(g_dl_directory, sizeof g_dl_directory, ds4_abs);
@@ -7180,11 +7385,23 @@ static void api_model_partials_delete(int fd, const char *body) {
                   "{\"ok\":false,\"error\":\"stop the active model download before deleting its partial files\"}");
         return;
     }
+    if (!fork_download_owned(target)) {
+        send_json(fd, "409 Conflict",
+                  "{\"ok\":false,\"error\":\"This partial download was not started by DStudio 1017 and may belong to the stock DStudio app. Delete it there.\"}");
+        return;
+    }
     char checkout[DSTUDIO_PATH_MAX];
     int failed = 0;
     long long removed = 0;
     if (strcmp(target, "laguna-q4")) {
         cstr_copy(checkout, sizeof checkout, g_ds4_dir);
+        char part[DSTUDIO_PATH_MAX + 1110];
+        snprintf(part, sizeof part, "%s/%s.part", checkout, target_rel);
+        if (download_file_recently_written(part)) {
+            send_json(fd, "409 Conflict",
+                      "{\"ok\":false,\"error\":\"That partial file was changed in the last two minutes, so another program is probably still downloading it. Nothing was deleted.\"}");
+            return;
+        }
         removed = delete_stable_model_partial(checkout, target_rel, &failed);
     } else {
         snprintf(checkout, sizeof checkout, "%s/%s", g_web_dir, DS4_LAGUNA_DIR_NAME);
@@ -7195,6 +7412,7 @@ static void api_model_partials_delete(int fd, const char *body) {
                   "{\"ok\":false,\"error\":\"some partial files could not be deleted\"}");
         return;
     }
+    fork_download_forget(target);
     if (!strcmp(g_dl_variant, target) ||
         (!strcmp(target, "flash-abliterated") && !strcmp(g_dl_variant, "flash"))) {
         g_dl_variant[0] = '\0';
@@ -7252,7 +7470,18 @@ static void api_status(int fd) {
             }
         } else if (!port_open && !g_ready) {
             pid_t owner = ds4_instance_lock_owner();
-            if (owner != 0) {
+            if (owner > 0 && ds4_lock_owner_foreign(owner, g_cfg.port)) {
+                /* Not our engine and it will never listen on our port: say so instead of waiting. */
+                engine_running = 0;
+                g_external_server = 0;
+                snprintf(g_engine_err, sizeof g_engine_err, "%s", ENGINE_LOCK_BUSY_MSG);
+                snprintf(g_stage, sizeof g_stage, "Another DStudio is running a model");
+                if (g_active_launch_task) {
+                    task_mark_failed(g_active_launch_task, g_engine_err, "engine lock held by another DStudio");
+                    g_active_launch_task = 0;
+                    g_active_launch_mode = ENGINE_NONE;
+                }
+            } else if (owner != 0) {
                 engine_running = 1; /* loading but alive: keep the startup UI waiting */
                 g_load_pct = g_load_pct < 5 ? 5 : g_load_pct;
                 if (owner > 0)
@@ -8072,6 +8301,11 @@ static void api_engine_checkout_set(int fd, const char *body) {
         send_json(fd, "400 Bad Request", "{\"ok\":false,\"error\":\"not a ds4 checkout\"}");
         return;
     }
+    if (dstudio_checkout_is_stock(abs) || dstudio_checkout_is_stock(dir)) {
+        fprintf(stderr, "engine: refused checkout %s (inside the stock DStudio folder)\n", abs);
+        send_json(fd, "409 Conflict", "{\"ok\":false,\"error\":\"" STOCK_CHECKOUT_MSG "\"}");
+        return;
+    }
     if (checkout_is_legacy_qwen(abs)) {
         send_json(fd, "410 Gone", "{\"ok\":false,\"error\":\"The separate Qwen Next engine was retired. Select Qwen Next from ds4 main; old files are preserved.\"}");
         return;
@@ -8711,6 +8945,15 @@ static void launch_commit(launch_job *j) {
 
     if (!j->resident && requested_mode == ENGINE_SERVER && !port_listening(cfg.port)) {
         pid_t owner = ds4_instance_lock_owner();
+        if (owner > 0 && ds4_lock_owner_foreign(owner, cfg.port)) {
+            task_mark_failed(task_id, ENGINE_LOCK_BUSY_MSG, "engine lock held by another DStudio");
+            char out[384];
+            snprintf(out, sizeof out,
+                     "{\"ok\":false,\"taskId\":%llu,\"code\":\"engine_lock_busy\",\"pid\":%ld,\"error\":\"" ENGINE_LOCK_BUSY_MSG "\"}",
+                     task_id, (long)owner);
+            send_json(fd, "409 Conflict", out);
+            return;
+        }
         if (owner != 0) {
             reuse_external_ds4(&cfg, 0, owner);
             dstudio_task *t = task_find(task_id);
@@ -10121,7 +10364,7 @@ static void on_term(int sig) { (void)sig; g_stop = 1; if (g_child > 0 && !g_exte
 /* Called by the windowed launcher's parent-death watcher (app.cc): the GUI
  * parent was killed or crashed, so stop the engine child and end the server
  * loop. Without this the server child would keep running as an orphan, holding
- * :5500 and the WebView2 profile lock (blank window on the next launch). */
+ * :5517 and the WebView2 profile lock (blank window on the next launch). */
 void ds4ui_parent_died(void) {
     stop_child();
     g_stop = 1;
@@ -10143,8 +10386,17 @@ static void store_file_path(char *out, size_t n) {
     if (!base || !base[0]) base = getenv("USERPROFILE");
     snprintf(out, n, "%s\\DStudio\\ds4web-store.json", base ? base : ".");
 #else
+    /* DStudio 1017: keep chats in the fork's own data dir. The stock app's
+     * ~/.local/share/flashcards/ds4web-store.json is never read or written,
+     * so the two apps cannot overwrite each other's chat history. */
+    char dir[2048];
+    if (dstudio_data_dir_path(dir, sizeof dir)) {
+        mkpath(dir);
+        snprintf(out, n, "%s/ds4web-store.json", dir);
+        return;
+    }
     const char *home = getenv("HOME");
-    snprintf(out, n, "%s/.local/share/flashcards/ds4web-store.json", home ? home : ".");
+    snprintf(out, n, "%s/.local/share/flashcards/ds4web-store-1017.json", home ? home : ".");
 #endif
 }
 static void store_load(void) {
@@ -12142,6 +12394,7 @@ int main(int argc, char **argv)
      * exit. To test the patch without starting engine/HTTP: ./dstudio --build-jsonl [ds4-dir] */
     if (argc > 1 && strcmp(argv[1], "--build-jsonl") == 0) {
         resolve_web_dir();
+        if (argc > 2 && dstudio_checkout_is_stock(argv[2])) { fprintf(stderr, "%s\n", STOCK_CHECKOUT_MSG); return 2; }
         if (argc > 2) { snprintf(g_ds4_dir, sizeof g_ds4_dir, "%s", argv[2]); g_ds4_dir_explicit = 1; }
         resolve_ds4_dir();
         int ok = run_build_jsonl("build");
@@ -12152,6 +12405,7 @@ int main(int argc, char **argv)
         return setup_engine_cli(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--build-design")) {
         resolve_web_dir();
+        if (argc > 2 && dstudio_checkout_is_stock(argv[2])) { fprintf(stderr, "%s\n", STOCK_CHECKOUT_MSG); return 2; }
         if (argc > 2) { cstr_copy(g_ds4_dir, sizeof g_ds4_dir, argv[2]); g_ds4_dir_explicit = 1; }
         resolve_ds4_dir();
         const char *action = argc > 3 ? argv[3] : "build";
@@ -12161,6 +12415,7 @@ int main(int argc, char **argv)
     /* Compile only: no model loading, listeners or engine launch. */
     if (argc > 1 && strcmp(argv[1], "--build-server-pld") == 0) {
         resolve_web_dir();
+        if (argc > 2 && dstudio_checkout_is_stock(argv[2])) { fprintf(stderr, "%s\n", STOCK_CHECKOUT_MSG); return 2; }
         if (argc > 2) { snprintf(g_ds4_dir, sizeof g_ds4_dir, "%s", argv[2]); g_ds4_dir_explicit = 1; }
         resolve_ds4_dir();
         int rc = run_build_server_pld();
@@ -12171,6 +12426,7 @@ int main(int argc, char **argv)
      * anything (no model, no .o). Exit 0 if the patch would apply, 1 otherwise. */
     if (argc > 1 && strcmp(argv[1], "--check-anchors") == 0) {
         resolve_web_dir();
+        if (argc > 2 && dstudio_checkout_is_stock(argv[2])) { fprintf(stderr, "%s\n", STOCK_CHECKOUT_MSG); return 2; }
         if (argc > 2) { snprintf(g_ds4_dir, sizeof g_ds4_dir, "%s", argv[2]); g_ds4_dir_explicit = 1; }
         resolve_ds4_dir();
         char src[2200], web_src[2200];
@@ -12193,16 +12449,24 @@ int main(int argc, char **argv)
         port = (int)p;
     }
     resolve_web_dir();   /* same for extension/ scripts (build-design.sh) */
-    if (argc > 2) {
+    if (argc > 2 && dstudio_checkout_is_stock(argv[2])) {
+        fprintf(stderr, "engine: ignoring %s: it is inside the stock DStudio folder; using the default DStudio 1017 checkout\n", argv[2]);
+    } else if (argc > 2) {
         snprintf(g_ds4_dir, sizeof g_ds4_dir, "%s", argv[2]);
         g_ds4_dir_explicit = 1;
     } else if (load_persisted_ds4_checkout(g_ds4_dir, sizeof g_ds4_dir)) {
         /* A saved UI selection has the same precedence as an explicit path,
          * but an actual CLI argument above always wins. */
         g_ds4_dir_explicit = 1;
+        if (dstudio_checkout_is_stock(g_ds4_dir)) {
+            fprintf(stderr, "engine: saved checkout %s is inside the stock DStudio folder; ignoring it and using the default DStudio 1017 checkout\n", g_ds4_dir);
+            cstr_copy(g_ds4_dir, sizeof g_ds4_dir, "ds4");
+            g_ds4_dir_explicit = 0;
+        }
     }
     resolve_ds4_dir();   /* launch from Finder/bundle: cwd = "/", the relative one must be resolved */
     int test_mode = getenv("DS4UI_TEST_MODE") && getenv("DS4UI_TEST_MODE")[0];
+    if (!test_mode) setup_shared_gguf_startup_repair();
     /* A persisted retired Qwen checkout falls back to the sibling main
      * installation, which holds the same gguf/ store. The old directory and
      * its files are left exactly as they are. */

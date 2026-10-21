@@ -108,8 +108,8 @@ async function chat(baseUrl, model, messages, think) {
 // One model at a time, on a machine not already holding another engine: a
 // running DS4 or Qwen engine shares the same RAM/GPU budget, and the test host
 // must never attach to or stop it.
-if (await listening(28000)) {
-  receipt.failures.push('BLOCKED: another engine listens on 127.0.0.1:28000; close it (DStudio or ds4-server) and rerun');
+if (await listening(28017)) {
+  receipt.failures.push('BLOCKED: another engine listens on 127.0.0.1:28017; close it (DStudio or ds4-server) and rerun');
   receipt.blocked = true;
 }
 for (const key of receipt.blocked ? [] : wanted) {

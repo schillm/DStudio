@@ -1,6 +1,6 @@
 # DStudio — native desktop app for ds4 (server + agent + design).
 #
-#   make            macOS: builds DStudio.app (double-click, no Terminal)
+#   make            macOS: builds DStudio1017.app (double-click, no Terminal)
 #                   Linux: builds ./dstudio (the same app, WebKitGTK window)
 #   make run        compiles and starts (opens the window on the interface)
 #   make check      full verification: fast tests + real model/web E2E tests
@@ -26,7 +26,7 @@ ifeq ($(STRICT_WARNINGS),1)
   WARN_CXXFLAGS += -Wextra -Wpedantic -Werror
 endif
 CFLAGS  ?= -O2 $(WARN_CFLAGS) -std=c11
-PORT    ?= 5500
+PORT    ?= 5517
 DS4_DIR ?= ../ds4
 VERSION ?= 1.1.0
 BUILD_NUMBER ?= 110
@@ -36,7 +36,7 @@ SRC      := src/dstudio.c
 # Per-domain sub-files #included into dstudio.c (one translation unit, all
 # static — same pattern as the GSA/RSA .cfrag includes). Listed as build
 # prerequisites so editing a domain file triggers a rebuild.
-SUBSRC   := $(wildcard src/dstudio_*.c) src/harness/design/design_system_catalog.h extension/remote/dstudio_wire_string.h extension/remote/dstudio_json_tokens.h
+SUBSRC   := $(wildcard src/dstudio_*.c) src/dstudio_identity.h src/harness/design/design_system_catalog.h extension/remote/dstudio_wire_string.h extension/remote/dstudio_json_tokens.h
 EXT_SUBSRC := $(wildcard src/harness/gsa/*.cfrag src/harness/rsa/*.cfrag)
 APP      := src/app.cc
 HDR      := src/webview.h
@@ -58,7 +58,7 @@ TEST_REMOTE_UTF8 := $(TEST_BUILD)/remote_utf8_unit
 TEST_COWORK_BRIDGE := $(TEST_BUILD)/ds4_cowork_bridge
 TEST_SERVER := $(TEST_BUILD)/dstudio-server-test
 TEST_TASK_GRAPH := $(TEST_BUILD)/task_graph_unit
-LINUX_APP_ID := dev.ds4.DStudio
+LINUX_APP_ID := dev.ds4.DStudio1017
 DESKTOP  := $(LINUX_APP_ID).desktop
 XDG_DATA_HOME ?= $(HOME)/.local/share
 DESKTOP_INSTALL_DIR ?= $(XDG_DATA_HOME)/applications
@@ -98,10 +98,10 @@ all: $(DESKTOP)
 endif
 endif
 
-# macOS bundle: DStudio.app launches with a double click from the Finder, WITHOUT a Terminal.
+# macOS bundle: DStudio1017.app launches with a double click from the Finder, WITHOUT a Terminal.
 # The binary in the bundle is copied with -X (no resource fork: codesign rejects
 # the "detritus"); the bundle icon comes from the .icns in Resources.
-APPNAME := DStudio
+APPNAME := DStudio1017
 APPDIR  := $(APPNAME).app
 APP_SUPPORT := $(APPDIR)/Contents/Resources/DStudio
 # Native harness sources are part of the materialized support payload. The
@@ -160,7 +160,7 @@ endif
 
 dist-macos: test-macos-bundle
 ifeq ($(UNAME),Darwin)
-	@$(MAKE) --no-print-directory check-engine-upstream ENGINE_UPSTREAM_APP="$(APPDIR)/Contents/MacOS/DStudio" ENGINE_UPSTREAM_PLATFORM=macos
+	@$(MAKE) --no-print-directory check-engine-upstream ENGINE_UPSTREAM_APP="$(APPDIR)/Contents/MacOS/$(APPNAME)" ENGINE_UPSTREAM_PLATFORM=macos
 	@mkdir -p $(DIST_DIR)
 	@rm -f $(MAC_ZIP) $(MAC_SHA)
 	@ditto -c -k --sequesterRsrc --keepParent $(APPDIR) $(MAC_ZIP)
@@ -236,7 +236,7 @@ build/dstudio.o: $(SRC) $(SUBSRC) $(EXT_SUBSRC) $(GEN) $(LOADING_GEN) $(ANNOTATO
 	$(CC) $(CFLAGS) -DDS4_WITH_WEBVIEW -c $(SRC) -o $@
 
 # Entry point + native webview window. On Linux $(APP_DEPS) pulls in logo_data.h.
-build/app.o: $(APP) $(APP_DEPS)
+build/app.o: $(APP) $(APP_DEPS) src/dstudio_identity.h src/webview.h
 	@mkdir -p build
 	$(APPCXX) $(APP_CXXFLAGS) -c $(APP) -o $@
 
@@ -260,7 +260,7 @@ ifeq ($(UNAME),Linux)
 	{ \
 	  echo "[Desktop Entry]"; \
 	  echo "Type=Application"; \
-	  echo "Name=DStudio"; \
+	  echo "Name=DStudio 1017"; \
 	  echo "Comment=Local DS4 desktop studio"; \
 	  echo "Exec=$$abs_bin"; \
 	  echo "Icon=$$abs_icon"; \
@@ -283,7 +283,7 @@ ifeq ($(UNAME),Linux)
 	{ \
 	  echo "[Desktop Entry]"; \
 	  echo "Type=Application"; \
-	  echo "Name=DStudio"; \
+	  echo "Name=DStudio 1017"; \
 	  echo "Comment=Local DS4 desktop studio"; \
 	  echo "Exec=$$abs_bin"; \
 	  echo "Icon=$(LINUX_APP_ID)"; \
@@ -619,7 +619,7 @@ test-llama-dynamic-build:
 
 # REAL inference: the bundled llama.cpp engine with the pinned Qwen weights,
 # one model at a time (DSTUDIO_LLAMA_MODELS=qwen36|qwen27). Builds llama.cpp
-# on first use; refuses to run while another engine holds port 28000.
+# on first use; refuses to run while another engine holds port 28017.
 .PHONY: test-llama-resident-live
 test-llama-resident-live: $(TEST_SERVER)
 	@node tests/live/llama_resident_live_test.mjs
@@ -627,7 +627,7 @@ test-llama-resident-live: $(TEST_SERVER)
 # REAL inference through the harness bridge: pi and opencode as the Agent
 # runtime with Qwen3.6/27B (llama.cpp) and DeepSeek (bridge-owned ds4-server).
 # Needs scripts/install-harness.py first; DSTUDIO_HARNESSES / DSTUDIO_HARNESS_MODELS
-# select one combination. Sequential; refuses to run beside an engine on 28000.
+# select one combination. Sequential; refuses to run beside an engine on 28017.
 .PHONY: test-harness-live
 test-harness-live: $(TEST_SERVER)
 	@node tests/live/harness_live_test.mjs

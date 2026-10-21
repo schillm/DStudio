@@ -29,6 +29,7 @@
 #include <sys/wait.h>
 #include <pthread.h>
 #endif
+#include "dstudio_identity.h"
 #include "webview.h"
 
 extern "C" int ds4_serve_main(int argc, char **argv);
@@ -51,7 +52,7 @@ typedef int app_socket_t;
 #endif
 
 /* Pick the first FREE port at/after `start` for the host the server will bind.
- * Without this, if 5500 is
+ * Without this, if 5517 is
  * squatted (e.g. a leftover Django runserver) the server can't bind and the window opens onto the
  * squatter (or nothing) — a blank screen. With it, DStudio just opens on the next free port. */
 static int pick_free_port(const char *host, int start) {
@@ -95,15 +96,15 @@ static int saved_http_port(void) {
         n = snprintf(path, sizeof path, "%s/http-port", configured);
 #ifdef _WIN32
     } else if (getenv("LOCALAPPDATA") && getenv("LOCALAPPDATA")[0]) {
-        n = snprintf(path, sizeof path, "%s/DStudio/http-port", getenv("LOCALAPPDATA"));
+        n = snprintf(path, sizeof path, "%s/" DSTUDIO_SUPPORT_NAME "/http-port", getenv("LOCALAPPDATA"));
 #elif defined(__APPLE__)
     } else if (getenv("HOME") && getenv("HOME")[0]) {
-        n = snprintf(path, sizeof path, "%s/Library/Application Support/DStudio/http-port", getenv("HOME"));
+        n = snprintf(path, sizeof path, "%s/Library/Application Support/" DSTUDIO_SUPPORT_NAME "/http-port", getenv("HOME"));
 #else
     } else if (getenv("XDG_CONFIG_HOME") && getenv("XDG_CONFIG_HOME")[0]) {
-        n = snprintf(path, sizeof path, "%s/dstudio/http-port", getenv("XDG_CONFIG_HOME"));
+        n = snprintf(path, sizeof path, "%s/" DSTUDIO_SUPPORT_NAME_LINUX "/http-port", getenv("XDG_CONFIG_HOME"));
     } else if (getenv("HOME") && getenv("HOME")[0]) {
-        n = snprintf(path, sizeof path, "%s/.config/dstudio/http-port", getenv("HOME"));
+        n = snprintf(path, sizeof path, "%s/.config/" DSTUDIO_SUPPORT_NAME_LINUX "/http-port", getenv("HOME"));
 #endif
     }
     if (n < 0 || (size_t)n >= sizeof path) return 0;
@@ -129,7 +130,7 @@ static int port_from_argv(int argc, char **argv) {
     }
     int saved = saved_http_port();
     if (saved) return saved;
-    return 5500;
+    return DSTUDIO_DEFAULT_HTTP_PORT;
 }
 
 /* Wait until the server accepts connections on 127.0.0.1:port. */
@@ -162,7 +163,7 @@ static int wait_for_port(int port, int timeout_ms) {
 #ifdef _WIN32
 static HANDLE g_instance_mutex = NULL;
 static int acquire_single_instance_lock(void) {
-    g_instance_mutex = CreateMutexA(NULL, TRUE, "Local\\DStudioSingleInstance");
+    g_instance_mutex = CreateMutexA(NULL, TRUE, DSTUDIO_WIN_MUTEX_NAME);
     if (!g_instance_mutex) return 1; /* fail open: do not lock users out on OS errors */
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         CloseHandle(g_instance_mutex);
@@ -184,7 +185,7 @@ static int acquire_single_instance_lock(void) {
     const char *tmp = getenv("TMPDIR");
     if (!tmp || !tmp[0]) tmp = "/tmp";
     char path[512];
-    snprintf(path, sizeof path, "%s/dstudio-%ld.lock", tmp, (long)getuid());
+    snprintf(path, sizeof path, "%s/" DSTUDIO_LOCK_BASENAME "-%ld.lock", tmp, (long)getuid());
     int fd = open(path, O_RDWR | O_CREAT, 0600);
     if (fd < 0) return 1; /* fail open: a broken tmp dir should not brick startup */
     fcntl(fd, F_SETFD, FD_CLOEXEC); /* never let an exec'd child inherit/hold the lock */
@@ -447,7 +448,7 @@ int main(int argc, char **argv) {
     const char *path = getenv("DS4UI_SKIP_LOADING") ? "/" : "/loading.html";
     snprintf(url, sizeof url, "http://127.0.0.1:%d%s", port, path);
 
-    webview_t w = webview_create(1280, 860, "DStudio");
+    webview_t w = webview_create(1280, 860, DSTUDIO_APP_TITLE);
     webview_navigate(w, url);
     webview_run(w);   /* blocks while the window stays open */
 

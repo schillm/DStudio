@@ -15,6 +15,7 @@
 #ifndef DS4_WEBVIEW_H
 #define DS4_WEBVIEW_H
 
+#include "dstudio_identity.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -245,7 +246,7 @@ static NSString *ds4_js_string(NSString *s) {
     panel.allowsMultipleSelection = NO;
     panel.canCreateDirectories = YES;
     panel.prompt = @"Choose";
-    panel.message = @"Choose a folder for DStudio.";
+    panel.message = @"Choose a folder for DStudio 1017.";
     void (^finish)(NSModalResponse) = ^(NSModalResponse r) {
         NSString *path = (r == NSModalResponseOK && panel.URL) ? panel.URL.path : nil;
         [self resolveRequest:rid withPath:path];
@@ -403,7 +404,7 @@ static void webview_run(webview_t handle) {
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include "logo_data.h"   /* generated: the logo PNG bytes (LOGO_PNG / LOGO_PNG_LEN) */
 
-#define DS4_LINUX_APP_ID "dev.ds4.DStudio"
+#define DS4_LINUX_APP_ID "dev.ds4.DStudio1017"
 
 typedef struct {
     GtkWidget *window;
@@ -568,7 +569,7 @@ static GdkPixbuf *ds4_load_logo_pixbuf(void) {
 
 static webview_t webview_create(int width, int height, const char *title) {
     g_set_prgname(DS4_LINUX_APP_ID);
-    g_set_application_name("DStudio");
+    g_set_application_name(DSTUDIO_APP_TITLE);
     gdk_set_program_class(DS4_LINUX_APP_ID);
     gtk_init_check(0, NULL);
     ds4_install_linux_chrome_css();
@@ -814,10 +815,10 @@ static void ds4_init_webview2(ds4_wv *w) {
     wchar_t user_data[MAX_PATH];
     PWSTR local = NULL;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, NULL, &local))) {
-        swprintf(user_data, MAX_PATH, L"%ls\\DStudio\\WebView2", local);
+        swprintf(user_data, MAX_PATH, L"%ls\\DStudio 1017\\WebView2", local);
         CoTaskMemFree(local);
     } else {
-        swprintf(user_data, MAX_PATH, L".\\DStudio-WebView2");
+        swprintf(user_data, MAX_PATH, L".\\DStudio1017-WebView2");
     }
     CreateCoreWebView2EnvironmentWithOptions(
         NULL, user_data, NULL,
@@ -907,7 +908,7 @@ static webview_t webview_create(int width, int height, const char *title) {
     memset(&wc, 0, sizeof wc);
     wc.lpfnWndProc = ds4_wndproc;
     wc.hInstance = inst;
-    wc.lpszClassName = "DStudioWindow";
+    wc.lpszClassName = "DStudio1017Window";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hIcon = LoadIcon(inst, MAKEINTRESOURCE(DS4_WIN_ICON_ID));
     if (!wc.hIcon) wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);

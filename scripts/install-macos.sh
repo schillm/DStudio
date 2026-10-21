@@ -10,6 +10,13 @@
 #   # or:  bash scripts/install-macos.sh
 set -euo pipefail
 
+# ---- DStudio 1017 fork: DO NOT USE THIS SCRIPT ----
+# It downloads the upstream release and REPLACES ~/Applications/DStudio.app, i.e. the stock app that
+# this fork must never touch. Build this fork with `make app` (produces DStudio1017.app) instead.
+echo "This is the DStudio 1017 fork. scripts/install-macos.sh would replace the stock ~/Applications/DStudio.app" >&2
+echo "with the upstream release, so it is disabled here. Build the fork with:  make app   (-> DStudio1017.app)" >&2
+exit 1
+
 VERSION="${1:-v1.0.0}"
 RELEASE_TAG="${VERSION#v}"
 OWNER_REPO="sk8erboi17/DStudio"

@@ -619,6 +619,131 @@ static int setup_link_shared_gguf(const char *target, char *err, size_t errsz) {
 #endif
 }
 
+/* ---- DStudio 1017 fork: one physical copy of the model weights ----
+ * The fork keeps its own engine checkout but shares the stock app's weights
+ * folder. <checkout>/gguf becomes an absolute directory symlink to the stock
+ * folder (DSTUDIO_SHARED_GGUF_SUBPATH under $HOME). Nothing is ever deleted or
+ * moved: only an EMPTY real directory is replaced (rmdir), only our own symlink
+ * is unlinked, and a non-empty real directory or a foreign symlink is left as is. */
+enum {
+    SHARED_GGUF_ERROR = 0,
+    SHARED_GGUF_NO_STOCK,   /* not macOS / no stock weights folder: caller keeps the old behaviour */
+    SHARED_GGUF_KEPT,       /* nothing to change (already linked, foreign link, real folder with data, or it is the stock folder) */
+    SHARED_GGUF_LINKED,     /* a new symlink was created */
+    SHARED_GGUF_REPLACED    /* an empty real folder was replaced by the symlink */
+};
+
+/* Absolute stock weights folder ($HOME/DSTUDIO_SHARED_GGUF_SUBPATH); 0 when not applicable. */
+static int setup_shared_gguf_stock_path(char *out, size_t outsz) {
+#if defined(__APPLE__)
+    const char *home = getenv("HOME");
+    if (!home || home[0] != '/') return 0;
+    int n = snprintf(out, outsz, "%s/%s", home, DSTUDIO_SHARED_GGUF_SUBPATH);
+    return n > 0 && (size_t)n < outsz;
+#else
+    (void)out; (void)outsz;
+    return 0;
+#endif
+}
+
+/* `stock` is passed in (production: setup_shared_gguf_stock_path) so the unit test can use a temp dir.
+ * create_if_absent: install time creates the link when <checkout>/gguf is missing; the startup repair
+ * passes 0 and only converts an existing empty folder. */
+static int setup_shared_gguf_link_at(const char *checkout, const char *stock, int create_if_absent,
+                                     char *err, size_t errsz) {
+#ifdef _WIN32
+    (void)checkout; (void)stock; (void)create_if_absent; (void)err; (void)errsz;
+    return SHARED_GGUF_NO_STOCK;
+#else
+    char gguf[DSTUDIO_PATH_MAX + 16];
+    struct stat sst, gst;
+    if (!checkout || !checkout[0] || !stock || stock[0] != '/') return SHARED_GGUF_NO_STOCK;
+    if (stat(stock, &sst) != 0 || !S_ISDIR(sst.st_mode)) return SHARED_GGUF_NO_STOCK;
+    if (snprintf(gguf, sizeof gguf, "%s/gguf", checkout) >= (int)sizeof gguf) {
+        snprintf(err, errsz, "checkout path too long"); return SHARED_GGUF_ERROR;
+    }
+    if (lstat(gguf, &gst) != 0) {
+        if (errno != ENOENT) {
+            snprintf(err, errsz, "cannot inspect %.700s: %s", gguf, strerror(errno)); return SHARED_GGUF_ERROR;
+        }
+        if (!create_if_absent) return SHARED_GGUF_KEPT;
+    } else if (S_ISLNK(gst.st_mode)) {
+        return SHARED_GGUF_KEPT;                      /* ours or the user's: never rewritten */
+    } else if (!S_ISDIR(gst.st_mode)) {
+        snprintf(err, errsz, "%.700s exists and is not a folder", gguf); return SHARED_GGUF_ERROR;
+    } else {
+        if (gst.st_dev == sst.st_dev && gst.st_ino == sst.st_ino) return SHARED_GGUF_KEPT; /* this IS the stock folder */
+        int empty = 0;
+        if (!setup_dir_empty(gguf, &empty) || !empty) return SHARED_GGUF_KEPT;           /* has data: leave it */
+        if (rmdir(gguf) != 0) return SHARED_GGUF_KEPT;                                      /* raced with a writer */
+        if (symlink(stock, gguf) != 0) {
+            int saved = errno;
+            (void)mkdir(gguf, 0755);                                                       /* put the empty folder back */
+            snprintf(err, errsz, "could not link the shared model folder: %s", strerror(saved));
+            return SHARED_GGUF_ERROR;
+        }
+        return SHARED_GGUF_REPLACED;
+    }
+    if (symlink(stock, gguf) != 0) {
+        snprintf(err, errsz, "could not link the shared model folder: %s", strerror(errno));
+        return SHARED_GGUF_ERROR;
+    }
+    return SHARED_GGUF_LINKED;
+#endif
+}
+
+/* One place that prepares <checkout>/gguf for the managed main engine: the symlink to the stock weights
+ * folder when `stock` is given and exists, otherwise a plain folder. Used by the CLI installer and by the
+ * onboarding path (api_setup_ds4) so both end in the same layout. `stock` may be NULL. */
+static int setup_prepare_checkout_gguf(const char *checkout, const char *stock, char *err, size_t errsz) {
+    char link_err[512] = "";
+    int shared = stock ? setup_shared_gguf_link_at(checkout, stock, 1, link_err, sizeof link_err) : SHARED_GGUF_NO_STOCK;
+    if (shared == SHARED_GGUF_ERROR) { snprintf(err, errsz, "%s", link_err); return 0; }
+    if (shared == SHARED_GGUF_NO_STOCK) {
+        char models[DSTUDIO_PATH_MAX + 16];
+        if (!setup_gguf_dir_path(checkout, models, sizeof models)) { snprintf(err, errsz, "gguf folder path is too long under %s", checkout); return 0; }
+        if (mkdir(models, 0755) != 0 && errno != EEXIST) {
+            snprintf(err, errsz, "cannot create model directory: %s", strerror(errno)); return 0;
+        }
+    }
+    return 1;
+}
+
+/* True when the only thing inside `dir` is a `gguf` symlink to the stock folder, i.e. what a previous
+ * run of this code left behind; the installer may then unlink that one symlink and proceed. */
+static int setup_dir_only_shared_gguf_link(const char *dir, const char *stock) {
+#ifdef _WIN32
+    (void)dir; (void)stock; return 0;
+#else
+    DIR *d = opendir(dir);
+    if (!d) return 0;
+    int others = 0, ours = 0;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        if (!strcmp(e->d_name, "gguf")) {
+            char path[DSTUDIO_PATH_MAX + 16], link[DSTUDIO_PATH_MAX];
+            snprintf(path, sizeof path, "%s/gguf", dir);
+            ssize_t n = readlink(path, link, sizeof link - 1);
+            if (n > 0) { link[n] = '\0'; ours = strcmp(link, stock) == 0; }
+        } else others++;
+    }
+    closedir(d);
+    return ours && !others;
+#endif
+}
+
+/* Startup repair for the app's own managed checkout (never an arbitrary user-picked folder). */
+static void setup_shared_gguf_startup_repair(void) {
+    char stock[DSTUDIO_PATH_MAX], managed[DSTUDIO_PATH_MAX], err[512] = "";
+    if (!setup_shared_gguf_stock_path(stock, sizeof stock)) return;
+    if (!default_ds4_dir(managed, sizeof managed) || strcmp(managed, g_ds4_dir) != 0) return;
+    if (!ds4_dir_valid_path(g_ds4_dir)) return;
+    int r = setup_shared_gguf_link_at(g_ds4_dir, stock, 0, err, sizeof err);
+    if (r == SHARED_GGUF_REPLACED) fprintf(stderr, "engine: %s/gguf now shares the stock model folder %s\n", g_ds4_dir, stock);
+    else if (r == SHARED_GGUF_ERROR) fprintf(stderr, "engine: shared model folder not linked: %s\n", err);
+}
+
 static int setup_build_branch_runtimes(const char *target, const char *label,
                                        char *log_tail, size_t logsz,
                                        char *err, size_t errsz) {
@@ -690,6 +815,13 @@ static void api_setup_ds4(int fd, const char *body) {
         return;
     }
 
+    /* Checked before anything is created, patched or built. */
+    if (dstudio_checkout_is_stock(target)) {
+        fprintf(stderr, "engine: refused setup folder %s (inside the stock DStudio folder)\n", target);
+        setup_send_json(fd, "409 Conflict", 0, target, 0, 0, 0, 0, 0, 0, mode_name(g_mode), STOCK_CHECKOUT_MSG);
+        return;
+    }
+
     struct stat st;
     int exists = stat(target, &st) == 0;
     if (exists && !S_ISDIR(st.st_mode)) {
@@ -704,6 +836,11 @@ static void api_setup_ds4(int fd, const char *body) {
         int can_download = !exists;
         if (exists) {
             int empty = 0;
+            /* Leftover of an interrupted first run: only our own gguf symlink to the stock weights. */
+            char stock_left[DSTUDIO_PATH_MAX], gl[DSTUDIO_PATH_MAX + 16];
+            if (setup_shared_gguf_stock_path(stock_left, sizeof stock_left) &&
+                setup_dir_only_shared_gguf_link(target, stock_left) &&
+                snprintf(gl, sizeof gl, "%s/gguf", target) < (int)sizeof gl) (void)unlink(gl);
             if (!setup_dir_empty(target, &empty)) {
                 setup_send_json(fd, "409 Conflict", 0, target, 0, 0, 0, 0, 0, 0, mode_name(g_mode),
                                 "DStudio/ds4 exists but could not be inspected");
@@ -740,7 +877,15 @@ static void api_setup_ds4(int fd, const char *body) {
         return;
     }
     char gguf_err[1024];
-    if (!setup_ensure_gguf_dir(gguf_err, sizeof gguf_err)) {
+    /* The app-managed checkout shares the stock weights folder exactly like --install-engine does;
+     * a folder the user picked keeps a plain gguf folder (setup_ensure_gguf_dir). */
+    char managed_ds4[DSTUDIO_PATH_MAX], stock_gguf[DSTUDIO_PATH_MAX];
+    int is_managed = default_ds4_dir(managed_ds4, sizeof managed_ds4) && !strcmp(managed_ds4, g_ds4_dir);
+    int gguf_ok = is_managed
+        ? setup_prepare_checkout_gguf(g_ds4_dir, setup_shared_gguf_stock_path(stock_gguf, sizeof stock_gguf) ? stock_gguf : NULL,
+                                      gguf_err, sizeof gguf_err)
+        : setup_ensure_gguf_dir(gguf_err, sizeof gguf_err);
+    if (!gguf_ok) {
         setup_send_json(fd, "500 Internal Server Error", 0, g_ds4_dir, downloaded, 0, 0, 0, 0, 0,
                         mode_name(g_mode), gguf_err);
         return;

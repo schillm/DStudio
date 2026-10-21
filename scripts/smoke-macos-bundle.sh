@@ -2,7 +2,8 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-APP=${1:-"$ROOT/DStudio.app"}
+APPNAME=${DSTUDIO_APPNAME:-DStudio1017}
+APP=${1:-"$ROOT/$APPNAME.app"}
 
 # A Finder launch has no recursive-make jobserver. Subprocesses in this test
 # close its descriptors, so inheriting the parent's MAKEFLAGS under `make -j`
@@ -14,7 +15,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
   exit 0
 fi
 
-test -x "$APP/Contents/MacOS/DStudio"
+test -x "$APP/Contents/MacOS/$APPNAME"
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 codesign --verify --deep --strict "$APP"
 test ! -e "$APP/Contents/Resources/DStudio/ds4"
@@ -32,7 +33,7 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-/usr/bin/ditto "$APP" "$TMP_ROOT/DStudio.app"
+/usr/bin/ditto "$APP" "$TMP_ROOT/$APPNAME.app"
 PORT=$(python3 - <<'PY'
 import socket
 s = socket.socket()
@@ -46,7 +47,7 @@ PY
   cd /
   exec env DS4UI_DATA_DIR="$TMP_ROOT/support" \
   DS4UI_TEST_MODE=1 \
-  "$TMP_ROOT/DStudio.app/Contents/MacOS/DStudio" "$PORT"
+  "$TMP_ROOT/$APPNAME.app/Contents/MacOS/$APPNAME" "$PORT"
 ) >"$TMP_ROOT/server.log" 2>&1 &
 SERVER_PID=$!
 
@@ -109,7 +110,7 @@ python3 "$TMP_ROOT/support/scripts/download-qwen35.py" --help >/dev/null
 # Exercise the materialized llama.cpp installer without building or loading
 # weights. Packaging admission is distinct from model/inference qualification.
 python3 "$TMP_ROOT/support/scripts/install-llama.py" --root "$TMP_ROOT" --revision unused --manifest >/dev/null
-python3 - "$TMP_ROOT/DStudio.app/Contents/MacOS/DStudio" "$TMP_ROOT" <<'PY'
+python3 - "$TMP_ROOT/$APPNAME.app/Contents/MacOS/$APPNAME" "$TMP_ROOT" <<'PY'
 import json, os, re, subprocess, sys
 from pathlib import Path
 app, root = sys.argv[1:]
@@ -176,7 +177,7 @@ PY
 mkdir "$TMP_ROOT/build command fixture"
 printf '%s\n' 'CC=cc' 'UNAME_S=Darwin' 'CFLAGS=-O1 -DDS4_NO_GPU' \
   > "$TMP_ROOT/build command fixture/Makefile"
-python3 - "$TMP_ROOT/DStudio.app/Contents/MacOS/DStudio" "$TMP_ROOT" <<'PY'
+python3 - "$TMP_ROOT/$APPNAME.app/Contents/MacOS/$APPNAME" "$TMP_ROOT" <<'PY'
 import os, signal, subprocess, sys
 app, root = sys.argv[1:]
 env = {**os.environ, 'DS4UI_DATA_DIR': os.path.join(root, 'batch support')}
@@ -196,13 +197,13 @@ finally:
         except ProcessLookupError: pass
     child.wait()
 PY
-codesign --verify --deep --strict "$TMP_ROOT/DStudio.app"
+codesign --verify --deep --strict "$TMP_ROOT/$APPNAME.app"
 
 # Run the production Chat preparation against the current main source shape
 # using materialized bundle assets, from Finder's cwd. Compilation is simulated
 # in this lifecycle harness; the native build is a separate gate. An old bundle
 # that omits the current PLD patch must fail before it reaches that compiler.
 node "$ROOT/tests/integration/server_pld_build_test.mjs" \
-  "$TMP_ROOT/DStudio.app/Contents/MacOS/DStudio" --latest --bundle-profile
+  "$TMP_ROOT/$APPNAME.app/Contents/MacOS/$APPNAME" --latest --bundle-profile
 
 echo "macOS bundle smoke test: ok"

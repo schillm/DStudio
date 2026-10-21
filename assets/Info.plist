@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key>
-  <string>DStudio</string>
+  <string>DStudio 1017</string>
   <key>CFBundleDisplayName</key>
-  <string>DStudio</string>
+  <string>DStudio 1017</string>
   <key>CFBundleIdentifier</key>
-  <string>dev.ds4.DStudio</string>
+  <string>dev.ds4.DStudio1017</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>LSApplicationCategoryType</key>

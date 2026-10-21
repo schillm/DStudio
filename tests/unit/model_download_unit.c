@@ -92,6 +92,85 @@ static void ds41_progress_test(const char *root) {
     puts("V4.1 download: identity-bound progress, duplicate retries, Q4 assembly, selection isolation and no false completion PASS");
 }
 
+static void shared_partial_ownership_test(const char *root) {
+    /* A .part in the shared folder that this fork did not start is never listed, deleted or resumed. */
+    char rel[1100], part[2300], out[1024]; long long want = 0; int pair[2];
+    model_download_details("ds4f-q2", rel, sizeof rel, &want); assert(rel[0] && want > 0);
+    snprintf(part, sizeof part, "%s/%s.part", g_ds4_dir, rel);
+    assert(jsonl_write_file(part, "12345", 5));
+    char owned[2300]; assert(download_owned_path(owned, sizeof owned)); (void)unlink(owned);
+    char target[48]; long long have, expected;
+    g_dl_variant[0] = 0;
+    assert(!paused_model_download(target, sizeof target, &have, &expected));          /* foreign partial: invisible */
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
+    api_model_partials_delete(pair[0], "{\"target\":\"ds4f-q2\",\"confirm\":true}");
+    response(pair, out, sizeof out); assert(strstr(out, "409 Conflict") && strstr(out, "not started by DStudio 1017"));
+    assert(access(part, F_OK) == 0);
+    /* Resume of a freshly written partial is refused (another writer), without starting anything. */
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
+    api_model_download(pair[0], "{\"target\":\"ds4f-q2\"}");
+    response(pair, out, sizeof out); assert(strstr(out, "409 Conflict") && strstr(out, "Another program") && g_dl_pid <= 0);
+    assert(access(part, F_OK) == 0);
+    /* Once this fork has started the target, its partial is ours... */
+    fork_download_record("ds4f-q2"); fork_download_record("ds4f-q2");
+    assert(fork_download_owned("ds4f-q2") && !fork_download_owned("ds4f-q4"));
+    assert(paused_model_download(target, sizeof target, &have, &expected) && !strcmp(target, "ds4f-q2") && have == 5);
+    /* ...but a file touched in the last two minutes is still left alone. */
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
+    api_model_partials_delete(pair[0], "{\"target\":\"ds4f-q2\",\"confirm\":true}");
+    response(pair, out, sizeof out); assert(strstr(out, "409 Conflict") && strstr(out, "two minutes"));
+    assert(access(part, F_OK) == 0);
+    struct timeval old[2] = {{time(NULL) - 3600, 0}, {time(NULL) - 3600, 0}};
+    assert(utimes(part, old) == 0);
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
+    api_model_partials_delete(pair[0], "{\"target\":\"ds4f-q2\",\"confirm\":true}");
+    response(pair, out, sizeof out); assert(strstr(out, "200 OK") && strstr(out, "\"removedBytes\":5"));
+    assert(access(part, F_OK) != 0 && !fork_download_owned("ds4f-q2"));
+    /* The fork's own 1017 targets need no record. */
+    assert(fork_download_owned("ds41f-1017-q2") && fork_download_owned("ds41f-1017-vision"));
+    (void)unlink(owned);
+    (void)root;
+    puts("shared-folder partials: foreign .part invisible, not deletable, not resumable; own partials work; fresh files protected PASS");
+}
+
+static void laguna_cache_isolation_test(const char *root) {
+    /* Laguna's partial handling touches only cache entries carrying its own sha/file name. */
+    char co[2048], gg[2300], c1[2400], c2[2500], c3[2600], dl[2700];
+    snprintf(co, sizeof co, "%s/%s", root, "laguna-iso"); assert(mkdir(co, 0700) == 0);
+    snprintf(gg, sizeof gg, "%s/gguf", co); assert(mkdir(gg, 0700) == 0);
+    snprintf(c1, sizeof c1, "%s/.cache", gg); assert(mkdir(c1, 0700) == 0);
+    snprintf(c2, sizeof c2, "%s/huggingface", c1); assert(mkdir(c2, 0700) == 0);
+    snprintf(dl, sizeof dl, "%s/download", c2); assert(mkdir(dl, 0700) == 0);
+    const char *names[] = {
+        "opaque.1ce6a8f8806205c13330d7ca287bd198331dc5ca35ccc5d8a9a92a188a6f6f42.incomplete",       /* stock V4.1 Q2 */
+        "DeepSeek-V4.1-Flash-Q2.gguf.lock",                                                         /* stock lock */
+        "other.incomplete",
+        "opaque." MODEL_LAGUNA_SHA256 ".x.incomplete",                                              /* Laguna by sha */
+        MODEL_LAGUNA_BASENAME ".lock",                                                              /* Laguna by name */
+    };
+    const int sizes[] = {900, 1, 700, 50, 2};
+    char paths[5][2900];
+    for (int i = 0; i < 5; i++) {
+        snprintf(paths[i], sizeof paths[i], "%s/%s", dl, names[i]);
+        int f = open(paths[i], O_CREAT | O_EXCL | O_WRONLY, 0600); assert(f >= 0);
+        assert(ftruncate(f, sizes[i]) == 0); assert(close(f) == 0);
+    }
+    assert(hf_partial_bytes_in_checkout(co) == 50);                    /* stock 900/700 byte partials are not Laguna's */
+    char part[2300], final[2300];
+    assert(prepare_laguna_resumable_partial(co, part, sizeof part, final, sizeof final));
+    struct stat st;
+    assert(stat(part, &st) == 0 && st.st_size == 50);                  /* adopted Laguna's own only */
+    assert(access(paths[0], F_OK) == 0 && access(paths[2], F_OK) == 0 && access(paths[3], F_OK) != 0);
+    int failed = 0;
+    long long removed = delete_laguna_partial_files(co, &failed);
+    assert(!failed && removed == 52);                                  /* .part (50) + Laguna lock (2) */
+    assert(access(paths[0], F_OK) == 0 && access(paths[1], F_OK) == 0 && access(paths[2], F_OK) == 0);
+    assert(access(part, F_OK) != 0 && access(paths[4], F_OK) != 0);
+    for (int i = 0; i < 3; i++) assert(unlink(paths[i]) == 0);
+    assert(rmdir(dl) == 0 && rmdir(c2) == 0 && rmdir(c1) == 0 && rmdir(gg) == 0 && rmdir(co) == 0);
+    puts("laguna cache: stock *.incomplete / *.lock never adopted, counted or deleted PASS");
+}
+
 int main(void) {
 #ifndef _WIN32
     char root[] = "/tmp/dstudio-model-download-unit.XXXXXX";
@@ -108,6 +187,8 @@ int main(void) {
     cstr_copy(g_ds4_dir, sizeof g_ds4_dir, main_dir); cstr_copy(g_web_dir, sizeof g_web_dir, root);
     setenv("DS4UI_DATA_DIR", root, 1);
     ds41_progress_test(root);
+    shared_partial_ownership_test(root);
+    laguna_cache_isolation_test(root);
     /* Reproduce the host signal environment, including the handler whose
      * inheritance previously prevented an installer worker from stopping. */
     signal(SIGPIPE, SIG_IGN); signal(SIGTERM, on_term); signal(SIGINT, on_term);

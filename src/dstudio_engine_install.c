@@ -129,6 +129,13 @@ static int setup_install_engine(const char *engine, const char *root,
         struct stat st;
         if (lstat(target, &st) == 0) {
             int empty = 0;
+            /* A leftover from an interrupted run: the only content is our own gguf symlink to the stock
+             * weights. Unlinking that symlink (never its target) lets the sources install; it is
+             * recreated below. */
+            char stock[DSTUDIO_PATH_MAX], gl[DSTUDIO_PATH_MAX + 16];
+            if (S_ISDIR(st.st_mode) && !strcmp(engine, "main") && setup_shared_gguf_stock_path(stock, sizeof stock) &&
+                setup_dir_only_shared_gguf_link(target, stock) &&
+                snprintf(gl, sizeof gl, "%s/gguf", target) < (int)sizeof gl) (void)unlink(gl);
             if (!S_ISDIR(st.st_mode) || !setup_dir_empty(target, &empty) || !empty) {
                 snprintf(err, errsz, "target contains local data, refusing to replace: %.900s", target); return 0;
             }
@@ -147,10 +154,9 @@ static int setup_install_engine(const char *engine, const char *root,
         cstr_copy(g_web_dir, sizeof g_web_dir, saved);
         if (!linked) return 0;
     } else {
-        char models[DSTUDIO_PATH_MAX + 16]; snprintf(models, sizeof models, "%s/gguf", target);
-        if (mkdir(models, 0755) != 0 && errno != EEXIST) {
-            snprintf(err, errsz, "cannot create model directory: %s", strerror(errno)); return 0;
-        }
+        /* DStudio 1017: share the stock app's weights folder through a symlink when it exists. */
+        char stock[DSTUDIO_PATH_MAX];
+        if (!setup_prepare_checkout_gguf(target, setup_shared_gguf_stock_path(stock, sizeof stock) ? stock : NULL, err, errsz)) return 0;
     }
     printf("install-engine: building %s (no model loaded)\n", engine);
     return setup_build_branch_runtimes(target, engine, log_tail, sizeof log_tail, err, errsz);
@@ -165,6 +171,7 @@ static int setup_engine_cli(int argc, char **argv) {
     if (!realpath(argc == 4 ? argv[3] : ".", root)) {
         fprintf(stderr, "installation root must already exist: %s\n", strerror(errno)); return 2;
     }
+    if (dstudio_checkout_is_stock(root)) { fprintf(stderr, "install-engine: FAILED: %s\n", STOCK_CHECKOUT_MSG); return 2; }
     int downloaded = 0;
     int ok = setup_install_engine(argv[2], root, target, sizeof target, &downloaded, err, sizeof err);
     if (!ok) fprintf(stderr, "install-engine: FAILED: %s\n", err);

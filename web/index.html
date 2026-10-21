@@ -10038,7 +10038,7 @@
           <label class="field ds4dir-gate__field">
             <span>LAN address</span>
             <div class="ds4dir-gate__lan-row">
-              <input type="text" id="ds4dir-lan-address" placeholder="192.168.1.207:5500" spellcheck="false" autocomplete="off">
+              <input type="text" id="ds4dir-lan-address" placeholder="192.168.1.207:5517" spellcheck="false" autocomplete="off">
               <button type="button" id="ds4dir-lan-connect" class="btn btn--primary">Connect</button>
             </div>
           </label>
@@ -10149,7 +10149,7 @@
           <label class="onboard__connect">
             <span class="onboard__path-l" for="onboard-lan-address">LAN address</span>
             <div class="onboard__connect-row">
-              <input type="text" id="onboard-lan-address" class="onboard__lan-input" spellcheck="false" autocomplete="off" placeholder="192.168.1.207:5500">
+              <input type="text" id="onboard-lan-address" class="onboard__lan-input" spellcheck="false" autocomplete="off" placeholder="192.168.1.207:5517">
               <button type="button" id="onboard-lan-connect" class="btn btn--primary">Connect</button>
             </div>
           </label>
@@ -10557,7 +10557,7 @@
           <div class="field">
             <span>Connect to LAN <small class="field-note">use a DStudio host on the same network</small></span>
             <div class="field__row">
-              <input type="text" id="set-lan-connect-address" placeholder="192.168.1.207:5500" spellcheck="false" autocomplete="off">
+              <input type="text" id="set-lan-connect-address" placeholder="192.168.1.207:5517" spellcheck="false" autocomplete="off">
               <button type="button" id="set-lan-connect" class="btn">Connect</button>
             </div>
             <p class="set-help">Use this on the client machine. Chat uses the LAN host model; this machine keeps its own history and workspace. Agent and Design stay local to this device and never use the host filesystem.</p>
@@ -10636,7 +10636,7 @@
           <div class="field">
             <span>LAN address <small class="field-note">DStudio host used by this client</small></span>
             <div class="field__row">
-              <input type="text" id="lan-client-address" placeholder="192.168.1.207:5500" spellcheck="false" autocomplete="off">
+              <input type="text" id="lan-client-address" placeholder="192.168.1.207:5517" spellcheck="false" autocomplete="off">
               <button type="button" id="lan-client-connect" class="btn">Change LAN</button>
             </div>
             <p class="set-help">This client keeps its own local chats, app state and workspaces. Chat, Roadmap, Agent and Design use the LAN host model. Agent and Design still need the managed local DS4 runtime on this device.</p>
@@ -10868,11 +10868,11 @@
     }
 
     // The managed engine is always reached through serve's same-origin /v1
-    // proxy. Collapse its direct :28000 URL to the canonical empty base; keep a
+    // proxy. Collapse its direct :28017 URL to the canonical empty base; keep a
     // custom remote engine on any other port untouched.
     function adaptBaseUrl(url) {
       if (!url) return '';
-      try { if (new URL(url).port === '28000') return ''; } catch { return ''; }
+      try { if (new URL(url).port === '28017') return ''; } catch { return ''; }
       return url;
     }
 
@@ -10882,9 +10882,9 @@
       if (!/^https?:\/\//i.test(value)) value = `http://${value}`;
       let url;
       try { url = new URL(value); }
-      catch { throw new Error('Use an address like 192.168.1.207:5500.'); }
-      if (!url.hostname) throw new Error('Use an address like 192.168.1.207:5500.');
-      if (!url.port) url.port = '5500';
+      catch { throw new Error('Use an address like 192.168.1.207:5517.'); }
+      if (!url.hostname) throw new Error('Use an address like 192.168.1.207:5517.');
+      if (!url.port) url.port = '5517';
       return url.origin;
     }
 
@@ -15859,7 +15859,7 @@ Return exactly one complete fenced dstudio-roadmap JSON block and no prose. Neve
       Store.setSettings({ baseUrl: DEFAULT_BASE_URL, lanClientHost: '' });
       Api.invalidateHealth();
       if (pageIsLanServed()) {
-        window.location.href = `http://127.0.0.1:${location.port || '5500'}/loading.html`;
+        window.location.href = `http://127.0.0.1:${location.port || '5517'}/loading.html`;
       }
     }
 
@@ -18056,7 +18056,7 @@ Return exactly one complete fenced dstudio-roadmap JSON block and no prose. Neve
       }
 
       function render() {
-        // In pipe modes the :28000 chat probe is misleading ("Server
+        // In pipe modes the :28017 chat probe is misleading ("Server
         // unreachable" while the engine works fine): show the engine mode.
         const mode = typeof Switcher !== 'undefined' && Switcher.mode ? Switcher.mode() : 'server';
         const launching = typeof Switcher !== 'undefined' && Switcher.launching ? Switcher.launching() : null;
@@ -27618,7 +27618,7 @@ Choose however many stages, branches, and topics the subject actually warrants; 
         };
 
         on(f.baseUrl, 'change', () => {
-          // Empty or a :28000 URL → the local engine via serve's proxy ('').
+          // Empty or a :28017 URL → the local engine via serve's proxy ('').
           const url = adaptBaseUrl(f.baseUrl.value.trim().replace(/\/+$/, ''));
           f.baseUrl.value = url;
           Store.setSettings({ baseUrl: url });
@@ -37392,7 +37392,7 @@ Choose however many stages, branches, and topics the subject actually warrants; 
           Statusbar.render();
           askConfirm({
             title: 'A ds4-server is already running',
-            body: `Another ds4-server (port ${res.port || 28000}) is running outside the launcher — ` +
+            body: `Another ds4-server (port ${res.port || 28017}) is running outside the launcher — ` +
                   'the engine lock allows only one. The launcher can stop it and restart in this mode.',
             cta: 'Stop it & restart',
           }).then((yes) => { if (yes) runSwitch(target, cfg, title, true); });

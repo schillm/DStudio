@@ -232,11 +232,12 @@ assert.equal(helpers.isLoopbackHost('127.0.0.1'), true);
 assert.equal(helpers.isLoopbackHost('[::1]'), true);
 assert.equal(helpers.isLoopbackHost('192.168.1.207'), false);
 
-assert.equal(helpers.adaptBaseUrl('http://127.0.0.1:28000'), '');
-assert.equal(helpers.adaptBaseUrl('http://192.168.1.207:28000'), '');
+assert.equal(helpers.adaptBaseUrl('http://127.0.0.1:28017'), '');
+assert.equal(helpers.adaptBaseUrl('http://192.168.1.207:28017'), '');
+assert.equal(helpers.adaptBaseUrl('http://127.0.0.1:28000'), 'http://127.0.0.1:28000'); // stock DStudio's engine is a different server
 assert.equal(helpers.adaptBaseUrl('http://example.com:1234'), 'http://example.com:1234');
 
-assert.equal(helpers.normalizeLanHostUrl('192.168.1.207'), 'http://192.168.1.207:5500');
+assert.equal(helpers.normalizeLanHostUrl('192.168.1.207'), 'http://192.168.1.207:5517');
 assert.equal(helpers.normalizeLanHostUrl('192.168.1.207:5600'), 'http://192.168.1.207:5600');
 assert.equal(helpers.normalizeLanHostUrl('http://192.168.1.207:5600/path?q=1'), 'http://192.168.1.207:5600');
 assert.throws(() => helpers.normalizeLanHostUrl(''), /Insert the LAN address/);

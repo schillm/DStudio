@@ -15,6 +15,8 @@ ds4.icns
 ds4.iconset/
 .icontmp.*
 dev.ds4.DStudio.desktop
+dev.ds4.DStudio1017.desktop
+DStudio1017.app
 
 # Engine log (generated at runtime in the ds4 dir, but ignored just in case)
 ds4-server.log

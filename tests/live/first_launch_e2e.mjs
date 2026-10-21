@@ -11,10 +11,10 @@ import { nativePatchRoundtrip } from '../support/native_patch_roundtrip.mjs';
 
 assert.equal(process.platform, 'darwin', 'this gate requires macOS, not a skipped pass');
 const repo = process.cwd();
-const appSource = path.resolve(process.argv[2] || 'DStudio.app');
+const appSource = path.resolve(process.argv[2] || 'DStudio1017.app');
 fs.mkdirSync(path.resolve('tests/.artifacts'), { recursive: true });
 const run = fs.mkdtempSync(path.resolve('tests/.artifacts/first-launch-'));
-const app = path.join(run, 'DStudio.app');
+const app = path.join(run, 'DStudio1017.app');
 const data = path.join(run, 'support');
 const temp = path.join(run, 'tmp');
 fs.mkdirSync(temp);
@@ -37,7 +37,7 @@ let child, browser, page, sentinel;
 let childFinished;
 let serverPid;
 const external = () => {
-  const r = spawnSync('lsof', ['-nP', '-iTCP:28000', '-sTCP:LISTEN', '-t'], { encoding: 'utf8' });
+  const r = spawnSync('lsof', ['-nP', '-iTCP:28017', '-sTCP:LISTEN', '-t'], { encoding: 'utf8' });
   return (r.stdout || '').trim().split(/\s+/).filter(Boolean).map(Number).sort((a,b) => a-b);
 };
 let protectedPids = [];
@@ -90,12 +90,12 @@ function verifyRuntime(id, response) {
 try {
   execFileSync('codesign', ['--verify', '--deep', '--strict', appSource]);
   execFileSync('/usr/bin/ditto', [appSource, app]);
-  report.appSha256 = sha(path.join(app,'Contents/MacOS/DStudio'));
+  report.appSha256 = sha(path.join(app,'Contents/MacOS/DStudio1017'));
   report.sourceRevision = execFileSync('git', ['rev-parse','HEAD'], { encoding:'utf8' }).trim();
   report.sourceDiff = execFileSync('git', ['diff','--','src/dstudio_setup.c','src/dstudio.c'], { encoding:'utf8' });
   protectedPids = external();
   if (!protectedPids.length) {
-    sentinel = spawn(process.execPath, ['-e', "require('net').createServer(s=>s.end()).listen(28000,'127.0.0.1',()=>console.log('ready'))"],
+    sentinel = spawn(process.execPath, ['-e', "require('net').createServer(s=>s.end()).listen(28017,'127.0.0.1',()=>console.log('ready'))"],
       {detached:true,stdio:['ignore','pipe','pipe']});
     await new Promise((resolve,reject) => {
       sentinel.once('error',reject); sentinel.once('exit',code=>reject(Error(`sentinel exited: ${code}`)));
@@ -107,7 +107,7 @@ try {
   report.protectedListeners = protectedPids;
   const port = await freePort(); report.base = `http://127.0.0.1:${port}`;
   const fd = fs.openSync(path.join(run,'app.log'),'wx');
-  child = spawn('/usr/bin/sandbox-exec', ['-p', offlineProfile, path.join(app,'Contents/MacOS/DStudio'), String(port)], {
+  child = spawn('/usr/bin/sandbox-exec', ['-p', offlineProfile, path.join(app,'Contents/MacOS/DStudio1017'), String(port)], {
     cwd: '/', env, detached: true, stdio: ['ignore',fd,fd],
   });
   childFinished = new Promise(resolve => {
@@ -230,7 +230,7 @@ try {
     // A startup attempt is refused at the inference boundary, never an engine-install mock.
     assert.deepEqual(report.pageErrors,[]);
     execFileSync('codesign',['--verify','--deep','--strict',app]);
-    assert.equal(sha(path.join(app,'Contents/MacOS/DStudio')),report.appSha256);
+    assert.equal(sha(path.join(app,'Contents/MacOS/DStudio1017')),report.appSha256);
     return catalog;
   });
   await step('llama.cpp builds from bundled sources offline with no model or app restart', async () => {
@@ -238,7 +238,7 @@ try {
     // snapshot and builds llama-server with external network denied.
     const started = performance.now();
     const result = spawnSync('/usr/bin/sandbox-exec', ['-p', offlineProfile,
-      path.join(app,'Contents/MacOS/DStudio'), '--install-engine', 'llama', data],
+      path.join(app,'Contents/MacOS/DStudio1017'), '--install-engine', 'llama', data],
       { cwd: '/', env, encoding: 'utf8', timeout: 900000, maxBuffer: 32 * 1024 * 1024 });
     fs.writeFileSync(path.join(run,'llama-install.log'), (result.stdout || '') + (result.stderr || ''));
     assert.equal(result.error, undefined); assert.equal(result.status, 0, result.stderr);

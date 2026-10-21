@@ -15,7 +15,7 @@ const pid = Number(process.argv[3]);
 assert.ok(Number.isSafeInteger(pid) && pid > 1);
 const base = new URL(process.argv[4]);
 assert.equal(base.hostname, '127.0.0.1'); assert.equal(base.protocol, 'http:');
-const app = path.join(directory, 'DStudio.app/Contents/MacOS/DStudio');
+const app = path.join(directory, 'DStudio1017.app/Contents/MacOS/DStudio1017');
 const observed = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf8' }).trim();
 assert.equal(fs.realpathSync(observed), fs.realpathSync(app), 'never type into an unrelated application');
 const processIdentity = () => execFileSync('ps', ['-p', String(pid), '-o', 'uid=,lstart=,comm='],

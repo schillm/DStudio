@@ -16,6 +16,12 @@
 
 </div>
 
+> **DStudio 1017 fork** — see [FORK_1017.md](FORK_1017.md). This tree is a separate app ("DStudio 1017", ports 5517/28017) that shares the
+> stock DStudio's model weights through a symlinked `gguf` folder and nothing else. Build it with
+> `make app` (produces `DStudio1017.app`). Do **not** use `scripts/install-macos.sh` or the "Easiest
+> install" command below: they download and replace the stock `~/Applications/DStudio.app`
+> (the script refuses to run in this fork).
+
 ## Contents
 
 - [Current status: what works today and what does not](#current-status-october-3-2026)
@@ -133,7 +139,7 @@ Download the Apple Silicon zip from [GitHub Releases](https://github.com/sk8erbo
 2. [**System Settings → Privacy & Security → Open Anyway**](https://support.apple.com/guide/mac-help/mh40616/mac), or
 3. from Terminal: `xattr -cr /Applications/DStudio.app` (clears the download quarantine).
 
-**Easiest install** — downloads the release, verifies its SHA-256, removes the
+**Easiest install (upstream only, not this fork; see the note at the top)** — downloads the release, verifies its SHA-256, removes the
 download quarantine and installs to `~/Applications`:
 
 ```sh
@@ -158,7 +164,7 @@ open DStudio.app        # macOS
 ### First launch
 
 The first-run screen installs the pinned `ds4` engine into
-`~/Library/Application Support/DStudio` (copied from the bundled sources and
+`~/Library/Application Support/DStudio 1017` (copied from the bundled sources and
 compiled locally), then offers the supported models with their real download
 sizes. A local system check covers the engine, selected model, Chat and
 Agent/Cowork/Design runtimes, Cowork's Office helper, Web Search and network
@@ -1137,7 +1143,7 @@ not been rerun.
 ## Development and tests
 
 ```sh
-make run        # build + start on http://127.0.0.1:5500
+make run        # build + start on http://127.0.0.1:5517
 make check-fast # deterministic unit, HTTP, UI and fixture checks; no model
 make check      # check-fast plus explicitly configured real-model suites
 make dist-macos VERSION=1.1.0  # bundle smoke + upstream admission + release zip/checksum
@@ -1198,7 +1204,7 @@ Mac at 8k context and checked exact answers and a rendered Chat reply;
 DStudio is **localhost-only by default**. The web/LAN port can be changed in
 **Settings → Network → DStudio port**. To use it from a phone, tablet or another
 computer on the same Wi-Fi, choose **Settings → Network access → Enable on the
-LAN**; the app shows the address to open, e.g. `http://192.168.1.207:5500`.
+LAN**; the app shows the address to open, e.g. `http://192.168.1.207:5517`.
 
 <div align="center">
   <img src="assets/README%20images/LAN/LAN%20SETTINGS.png" height="340" alt="Settings: enable on the LAN">
