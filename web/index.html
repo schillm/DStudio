@@ -13493,8 +13493,9 @@ Return exactly one complete fenced dstudio-roadmap JSON block and no prose. Neve
     const DEFAULT_FLASH_GGUF = 'gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix-0731.gguf';
     const MODEL_DOWNLOADS = [
       { id: 'ds41f-q2', label: 'DeepSeek V4.1 Flash 1017 · Q2 — 365.7 GB including SSD-backed Engram · Metal', body: { target: 'ds41f-q2', engine: 'main' }, match: /^DeepSeek-V4\.1-Flash-1017-IQ2_XXS-Q2_K-imatrix\.gguf$/i },
+      { id: 'ds41f-q2-original', label: 'DeepSeek V4.1 Flash (original checkpoint) · Q2 — 365.7 GB including SSD-backed Engram · Metal', body: { target: 'ds41f-q2-original', engine: 'main' }, match: /^DeepSeek-V4\.1-Flash-Q2\.gguf$/i },
       { id: 'ds41f-q4', label: 'DeepSeek V4.1 Flash · Q4 — 518.6 GB including SSD-backed Engram · Metal', body: { target: 'ds41f-q4', engine: 'main' }, match: /^DeepSeek-V4\.1-Flash-Q4\.gguf$/i },
-      { id: 'ds41f-vision', role: 'vision-support', label: 'DeepSeek V4.1 Flash (original checkpoint, Q4) · matching native vision encoder — 0.97 GB · Metal', body: { target: 'ds41f-vision', engine: 'main' }, match: /^DeepSeek-V4\.1-Flash-Vision\.gguf$/i },
+      { id: 'ds41f-vision', role: 'vision-support', label: 'DeepSeek V4.1 Flash (original checkpoint: Q2 or Q4) · matching native vision encoder — 0.97 GB · Metal', body: { target: 'ds41f-vision', engine: 'main' }, match: /^DeepSeek-V4\.1-Flash-Vision\.gguf$/i },
       { id: 'ds41f-1017-vision', role: 'vision-support', label: 'DeepSeek V4.1 Flash 1017 · matching native vision encoder (community, nazeshinjite) — 0.97 GB · Metal', body: { target: 'ds41f-1017-vision', engine: 'main' }, match: /^DeepSeek-V4\.1-Flash-1017-Vision\.gguf$/i },
       { id: 'ds4f-q2', label: 'DeepSeek V4 Flash · chat — IQ2_XXS, ~81 GB (0731)', body: { target: 'ds4f-q2', engine: 'main' }, match: /^DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix-0731\.gguf$/i },
       { id: 'ds4f-q2-q4', label: 'DeepSeek V4 Flash · mixed Q2/Q4 — ~98 GB (0731)', body: { target: 'ds4f-q2-q4', engine: 'main' }, match: /Layers37-42Q4KExperts-OtherExpertLayersIQ2XXSGateUp-Q2KDown.*imatrix-fixed-0731/i },

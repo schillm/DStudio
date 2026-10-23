@@ -733,9 +733,14 @@ test-server-metrics-patch:
 test-native-patch-roundtrip:
 	@node tests/integration/native_patch_roundtrip_test.mjs "$(or $(NATIVE_PATCH_DIR),ds4)"
 
-.PHONY: test-v41-vision-pairing
+.PHONY: test-v41-vision-pairing test-v41-vision-pairing-live
 test-v41-vision-pairing:
 	@node tests/integration/v41_vision_pairing_patch_test.mjs
+
+# Real ds4 --inspect on published V4.1 headers in sparse files: network for the
+# headers (a few MB, cached), no weights downloaded or read. macOS only.
+test-v41-vision-pairing-live:
+	@node tests/live/v41_vision_pairing_live_test.mjs
 
 .PHONY: test-search-evidence
 test-search-evidence:
